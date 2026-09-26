@@ -269,14 +269,22 @@ create or replace PACKAGE BODY XXARCO_AR_INT_CUSTOMER_PKG AS
     -- =========================================================================
     PROCEDURE parse_json(p_json   IN  CLOB,
                          p_dados  OUT rec_dados_cliente) IS
-        -- Endereco de entrega (billing / BILL_TO)
+        -- Endereco de cobranca (billing / BILL_TO)
         l_billing_street       VARCHAR2(360);
         l_billing_number       VARCHAR2(100);
         l_billing_complement   VARCHAR2(100);
         l_billing_postal_code  VARCHAR2(20);
         l_billing_neighborhood VARCHAR2(360);
         l_billing_city         VARCHAR2(360);
-        l_billing_state        VARCHAR2(10);        
+        l_billing_state        VARCHAR2(10);
+        -- Endereco de entrega (delivey / SHIP_TO)
+        l_delivery_street       VARCHAR2(360);
+        l_delivery_number       VARCHAR2(100);
+        l_delivery_complement   VARCHAR2(100);
+        l_delivery_postal_code  VARCHAR2(20);
+        l_delivery_neighborhood VARCHAR2(360);
+        l_delivery_city         VARCHAR2(360);
+        l_delivery_state        VARCHAR2(10);
         -- Dados raiz do JSON
         l_doc_number    VARCHAR2(50);
         l_name          VARCHAR2(360);
@@ -321,13 +329,13 @@ create or replace PACKAGE BODY XXARCO_AR_INT_CUSTOMER_PKG AS
                    jt.neighborhood,
                    jt.city,
                    jt.state
-              INTO l_billing_street,
-                   l_billing_number,
-                   l_billing_complement,
-                   l_billing_postal_code,
-                   l_billing_neighborhood,
-                   l_billing_city,
-                   l_billing_state
+              INTO l_delivery_street,
+                   l_delivery_number,
+                   l_delivery_complement,
+                   l_delivery_postal_code,
+                   l_delivery_neighborhood,
+                   l_delivery_city,
+                   l_delivery_state
               FROM JSON_TABLE(p_json, '$.addresses[*]'
                      COLUMNS (
                          addr_type    VARCHAR2(20)  PATH '$.type',
@@ -403,14 +411,14 @@ create or replace PACKAGE BODY XXARCO_AR_INT_CUSTOMER_PKG AS
         p_dados.natureza_juridica  := 'COMERCIAL';
 
         -- Endereco (SHIP_TO)
-        p_dados.logradouro        := XXARCO_OM_INT_CAD_CLIENTE_PKG.insensitive_string(l_billing_street);
-        p_dados.numero            := XXARCO_OM_INT_CAD_CLIENTE_PKG.insensitive_string(l_billing_number);
-        p_dados.complemento       := XXARCO_OM_INT_CAD_CLIENTE_PKG.insensitive_string(l_billing_complement);
-        p_dados.cep               := l_billing_postal_code;
-        p_dados.bairro            := XXARCO_OM_INT_CAD_CLIENTE_PKG.insensitive_string(l_billing_neighborhood);
-        p_dados.cidade            := XXARCO_OM_INT_CAD_CLIENTE_PKG.insensitive_string(l_billing_city);
-        p_dados.unidadefederativa := UPPER(l_billing_state);
-        p_dados.estado            := UPPER(l_billing_state);
+        p_dados.logradouro        := XXARCO_OM_INT_CAD_CLIENTE_PKG.insensitive_string(l_delivery_street);
+        p_dados.numero            := XXARCO_OM_INT_CAD_CLIENTE_PKG.insensitive_string(l_delivery_number);
+        p_dados.complemento       := XXARCO_OM_INT_CAD_CLIENTE_PKG.insensitive_string(l_delivery_complement);
+        p_dados.cep               := l_delivery_postal_code;
+        p_dados.bairro            := XXARCO_OM_INT_CAD_CLIENTE_PKG.insensitive_string(l_delivery_neighborhood);
+        p_dados.cidade            := XXARCO_OM_INT_CAD_CLIENTE_PKG.insensitive_string(l_delivery_city);
+        p_dados.unidadefederativa := UPPER(l_delivery_state);
+        p_dados.estado            := UPPER(l_delivery_state);
         p_dados.pais              := 'BRASIL'; -- fixo conforme decisao
         -- Flags fixos
         p_dados.transportadora    := 'N';
@@ -808,7 +816,7 @@ create or replace PACKAGE BODY XXARCO_AR_INT_CUSTOMER_PKG AS
                AND ROWNUM   = 1;
         EXCEPTION
             WHEN OTHERS THEN
-                log_exception('existe_fornecedor', 'Nao encontrou pelo party_id ' || p_party_id || ': ' || SQLERRM);
+                print_log('  AVISO [existe_fornecedor]: Nao encontrou pelo party_id ' || p_party_id || ': ' || SQLERRM);
                 p_vendor_id := NULL;
         END;
 
@@ -822,7 +830,7 @@ create or replace PACKAGE BODY XXARCO_AR_INT_CUSTOMER_PKG AS
                    AND ROWNUM   = 1;
             EXCEPTION
                 WHEN OTHERS THEN
-                    log_exception('existe_fornecedor', 'Nao encontrou pelo CNPJ ' || g_documento || ': ' || SQLERRM);
+                    print_log('  AVISO [existe_fornecedor]: Nao encontrou pelo CNPJ ' || g_documento || ': ' || SQLERRM);
                     p_vendor_id := NULL;
             END;
         END IF;
@@ -1618,8 +1626,7 @@ print_log('##### create_vendor status: ' || w_return_status);
         SELECT aps.party_id, hzp.object_version_number, hzp.party_type
           INTO l_party_id, l_object_version_number, l_party_type
           FROM ap_suppliers aps, hz_parties hzp
-         WHERE vendor_id    = w_vendor_id
-           AND aps.party_id = w_party_id
+         WHERE aps.vendor_id = w_vendor_id
            AND aps.party_id = hzp.party_id
            AND ROWNUM       = 1;
 
@@ -1629,7 +1636,7 @@ print_log('##### create_vendor status: ' || w_return_status);
             l_vendor_rec.vendor_name_alt := p_dados.nome_fantasia;
 
             IF l_party_type = 'PERSON' THEN
-                l_party_rec.party_id               := w_party_id;
+                l_party_rec.party_id               := l_party_id;
                 l_party_rec.status                 := 'A';
                 l_person_rec_type.person_last_name := p_dados.nome_cliente;
                 l_person_rec_type.party_rec        := l_party_rec;
@@ -1650,13 +1657,13 @@ print_log('##### create_vendor status: ' || w_return_status);
                 
                 END IF;
             ELSE
-                IF p_dados.nome_cliente != l_organization_rec.organization_name THEN
+                IF p_dados.nome_cliente != NVL(l_organization_rec.organization_name, 'x') THEN
                     
                     l_organization_rec.organization_name          := p_dados.nome_cliente;
                     l_organization_rec.organization_name_phonetic := p_dados.nome_fantasia;
                 END IF;
                 
-                l_organization_rec.party_rec.party_id         := w_party_id;
+                l_organization_rec.party_rec.party_id         := l_party_id;
                 
                 hz_party_v2pub.update_organization(
                     p_init_msg_list               => fnd_api.g_true,
@@ -1677,7 +1684,7 @@ print_log('##### create_vendor status: ' || w_return_status);
 
         IF l_atualizar_vendor THEN
             l_vendor_rec.vendor_id := w_vendor_id;
-            l_vendor_rec.party_id  := w_party_id;
+            l_vendor_rec.party_id  := l_party_id;
             print_log('Chamando AP_VENDOR_PUB_PKG.UPDATE_VENDOR...');
             ap_vendor_pub_pkg.update_vendor(
                 p_api_version      => 1.0,
@@ -2099,10 +2106,18 @@ print_log('##### create_vendor status: ' || w_return_status);
                    p_cust_acct_site_rec.global_attribute9,
                    p_cust_acct_site_rec.global_attribute13,
                    p_status, l_object_version_number
-              FROM hz_cust_acct_sites hcas
-             WHERE cust_account_id = w_cust_account_id
-               AND party_site_id   = w_party_site_id
-               AND hcas.org_id     = p_org_id;
+              FROM (SELECT cust_acct_site_id, party_site_id, created_by_module,
+                           cust_account_id, org_id, global_attribute_category,
+                           global_attribute2, global_attribute3, global_attribute4,
+                           global_attribute5, global_attribute6, global_attribute8,
+                           global_attribute9, global_attribute13,
+                           status, object_version_number
+                      FROM hz_cust_acct_sites
+                     WHERE cust_account_id = w_cust_account_id
+                       AND party_site_id   = w_party_site_id
+                       AND org_id          = p_org_id
+                     ORDER BY DECODE(status, 'A', 1, 2)) hcas
+             WHERE ROWNUM = 1;
         EXCEPTION
             WHEN OTHERS THEN
                 w_cust_acct_site_id := NULL;
@@ -2125,6 +2140,7 @@ print_log('##### create_vendor status: ' || w_return_status);
 
             fnd_msg_pub.initialize;
             p_cust_acct_site_rec.cust_acct_site_id := NULL;
+            p_cust_acct_site_rec.status            := 'A';
 
             print_log('Chamando HZ_CUST_ACCOUNT_SITE_V2PUB.CREATE_CUST_ACCT_SITE...');
             hz_cust_account_site_v2pub.create_cust_acct_site(
@@ -2140,7 +2156,40 @@ print_log('##### create_vendor status: ' || w_return_status);
                 print_log('  Falha ao criar Cust Acct Site: ' || w_msg_data);
                 extrair_mensagens_api(w_msg_count);
                 ok := FALSE;
-                
+            ELSE
+                -- Forcar ativacao imediata: a API CREATE pode criar com status Inativo
+                -- dependendo de configs do ambiente. Precisamos ativar ANTES de criar os Site Uses.
+                DECLARE
+                    l_act_rec hz_cust_account_site_v2pub.cust_acct_site_rec_type;
+                    l_act_ovn NUMBER;
+                BEGIN
+                    SELECT object_version_number
+                      INTO l_act_ovn
+                      FROM hz_cust_acct_sites
+                     WHERE cust_acct_site_id = w_cust_acct_site_id;
+
+                    l_act_rec.cust_acct_site_id := w_cust_acct_site_id;
+                    l_act_rec.status            := 'A';
+
+                    hz_cust_account_site_v2pub.update_cust_acct_site(
+                        fnd_api.g_true,
+                        l_act_rec,
+                        l_act_ovn,
+                        w_return_status,
+                        w_msg_count,
+                        w_msg_data);
+
+                    IF w_return_status <> fnd_api.g_ret_sts_success THEN
+                        print_log('  AVISO: Falha ao ativar site recem-criado: ' || w_msg_data);
+                        extrair_mensagens_api(w_msg_count);
+                        ok := FALSE;
+                    ELSE
+                        print_log('  Cust Acct Site ' || w_cust_acct_site_id || ' criado e ativado com sucesso.');
+                    END IF;
+                EXCEPTION
+                    WHEN OTHERS THEN
+                        print_log('  AVISO: Erro ao ativar site recem-criado: ' || SQLERRM);
+                END;
             END IF;
 
         ELSIF w_cust_acct_site_id IS NOT NULL AND p_status != 'A' THEN
@@ -2198,10 +2247,18 @@ print_log('##### create_vendor status: ' || w_return_status);
                    p_cust_acct_site_rec.global_attribute9,
                    p_cust_acct_site_rec.global_attribute13,
                    p_status, l_object_version_number
-              FROM hz_cust_acct_sites hcas
-             WHERE cust_account_id = w_cust_account_id
-               AND party_site_id   = w_party_site_id
-               AND hcas.org_id     = p_org_id;
+              FROM (SELECT cust_acct_site_id, party_site_id, created_by_module,
+                           cust_account_id, org_id, global_attribute_category,
+                           global_attribute2, global_attribute3, global_attribute4,
+                           global_attribute5, global_attribute6, global_attribute8,
+                           global_attribute9, global_attribute13,
+                           status, object_version_number
+                      FROM hz_cust_acct_sites
+                     WHERE cust_account_id = w_cust_account_id
+                       AND party_site_id   = w_party_site_id
+                       AND org_id          = p_org_id
+                     ORDER BY DECODE(status, 'A', 1, 2)) hcas
+             WHERE ROWNUM = 1;
         EXCEPTION
             WHEN OTHERS THEN
                 w_cust_acct_site_id := NULL;
@@ -2266,7 +2323,11 @@ print_log('##### create_vendor status: ' || w_return_status);
                                      p_org_id NUMBER) IS
         l_cust_site_use_rec hz_cust_account_site_v2pub.cust_site_use_rec_type;
         l_bill_site_use_id  NUMBER;
+        l_saved_bill_to_id  NUMBER;
     BEGIN
+        -- Salva o site_use_id recebido (quando SHIP_TO, ele contem o BILL_TO criado antes)
+        l_saved_bill_to_id := p_site_use_id;
+        
         recuperar_site_use(w_cust_acct_site_id, p_use_code, p_site_use_id, p_org_id);
 
         IF p_site_use_id IS NULL THEN
@@ -2277,6 +2338,12 @@ print_log('##### create_vendor status: ' || w_return_status);
 
             IF p_use_code = 'SHIP_TO' THEN
                 recuperar_site_use(w_cust_acct_site_id, 'BILL_TO', l_bill_site_use_id, p_org_id);
+                -- Fallback: se a consulta nao encontrou, usa o BILL_TO id salvo
+                IF l_bill_site_use_id IS NULL THEN
+                    l_bill_site_use_id := l_saved_bill_to_id;
+                END IF;
+                print_log('  bill_to_site_use_id para SHIP_TO: ' || l_bill_site_use_id || 
+                           ' (cust_acct_site_id: ' || w_cust_acct_site_id || ')');
                 l_cust_site_use_rec.bill_to_site_use_id := l_bill_site_use_id;
             END IF;
 
@@ -2825,11 +2892,8 @@ print_log('##### create_cust_site_use status: ' || w_return_status);
             ELSIF l_site_modif = 'NAO_EXISTE_SHIP' THEN            
                 print_log('##### NAO_EXISTE_SHIP: ' || p_org_id);
                 -- Garante que hz_cust_acct_sites existe antes de criar as site uses
-                -- (pode estar ausente quando o cliente AR existe mas nao tem site nesta org)
-                IF w_cust_acct_site_id IS NULL THEN
-                    print_log('  cust_acct_site ausente: criando hz_cust_acct_sites para org ' || p_org_id);
-                    criar_cliente_site(p_dados, p_cust_site_rec, p_org_id);
-                END IF;
+                -- Sempre chama criar_cliente_site: se inativo, reativa; se ausente, cria novo
+                criar_cliente_site(p_dados, p_cust_site_rec, p_org_id);
                 criar_cliente_site_use(p_cust_site_use_rec, p_customer_profile_rec, 'BILL_TO', l_site_use_id,p_org_id);
                 criar_atualizar_receipt_method(w_cust_account_id, l_site_use_id, p_receipt_method_name);
                 criar_cliente_site_use(p_cust_site_use_rec, p_customer_profile_rec, 'SHIP_TO', l_site_use_id,p_org_id);
